@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { BusStop, LiveVehicle, BusRoute } from '../types/bus';
+import { BusStop, LiveVehicle } from '../types/bus';
 import { Locate, Navigation, Layers, Maximize2, Minimize2, Map as MapIcon, Compass } from 'lucide-react';
 
 interface BusMapProps {
@@ -8,7 +8,7 @@ interface BusMapProps {
   selectedStop: BusStop | null;
   onSelectStop: (stop: BusStop) => void;
   liveVehicles: LiveVehicle[];
-  activeRoute: BusRoute | null;
+  activeRoute?: any;
   userLocation: { lat: number; lng: number } | null;
   onLocateMe: () => void;
   isLocating: boolean;
@@ -241,11 +241,18 @@ export const BusMap: React.FC<BusMapProps> = ({
         onSelectStop(stop);
       });
 
+      const servicesText =
+        Array.isArray(stop.services) && stop.services.length > 0
+          ? `<div class="text-[11px] text-slate-600 mt-1">${stop.services.slice(0, 8).join(', ')}${
+              stop.services.length > 8 ? '...' : ''
+            }</div>`
+          : '';
+
       marker.bindTooltip(
         `<div class="text-xs">
-          <div class="font-bold text-slate-900">${stop.Description}</div>
-          <div class="text-slate-500">${stop.RoadName} · <span class="font-mono text-emerald-700 font-semibold">${stop.BusStopCode}</span></div>
-          <div class="text-[11px] text-slate-600 mt-1">${stop.services.slice(0, 8).join(', ')}${stop.services.length > 8 ? '...' : ''}</div>
+          <div class="font-bold text-slate-900">${stop.Description || `Bus Stop ${stop.BusStopCode}`}</div>
+          <div class="text-slate-500">${stop.RoadName || 'Singapore'} · <span class="font-mono text-emerald-700 font-semibold">${stop.BusStopCode}</span></div>
+          ${servicesText}
         </div>`,
         { direction: 'top', offset: [0, -14], opacity: 0.95 }
       );
@@ -273,16 +280,15 @@ export const BusMap: React.FC<BusMapProps> = ({
           ? 'bg-emerald-500 text-slate-950 ring-emerald-400'
           : veh.load === 'SDA'
           ? 'bg-amber-400 text-slate-950 ring-amber-300'
-          : 'bg-rose-500 text-white ring-rose-400';
-
-      const safeHeading = Number.isFinite(veh.heading) ? veh.heading : 90;
+          : veh.load === 'LSD'
+          ? 'bg-rose-500 text-white ring-rose-400'
+          : 'bg-slate-700 text-slate-100 ring-slate-600';
 
       const busIconHtml = `
         <div class="relative group cursor-pointer transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2">
           <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-md shadow-lg border border-slate-900/40 text-[10px] font-bold ring-1 ${loadBg}">
-            <span style="display:inline-block; transform: rotate(${safeHeading}deg);" class="text-[9px]">▲</span>
-            <span>${veh.serviceNo}</span>
-            <span class="text-[8px] opacity-75 font-mono">${veh.type}</span>
+            <span>Bus ${veh.serviceNo}</span>
+            <span class="text-[8px] opacity-80 font-mono">${veh.type || 'SD'}</span>
           </div>
         </div>
       `;
@@ -290,8 +296,8 @@ export const BusMap: React.FC<BusMapProps> = ({
       const busIcon = L.divIcon({
         html: busIconHtml,
         className: 'custom-live-bus-marker',
-        iconSize: [44, 24],
-        iconAnchor: [22, 12],
+        iconSize: [52, 24],
+        iconAnchor: [26, 12],
       });
 
       const marker = L.marker([veh.lat, veh.lng], { icon: busIcon });
@@ -301,18 +307,24 @@ export const BusMap: React.FC<BusMapProps> = ({
           ? 'Seats Available'
           : veh.load === 'SDA'
           ? 'Standing Available'
-          : 'Limited Standing';
+          : veh.load === 'LSD'
+          ? 'Limited Standing'
+          : 'Normal';
 
       marker.bindTooltip(
         `<div class="text-xs p-1">
           <div class="font-bold text-slate-900 flex items-center justify-between gap-4">
             <span>Bus ${veh.serviceNo} (${veh.operator})</span>
-            <span class="text-[10px] font-mono text-slate-500">${veh.id}</span>
+            <span class="text-[10px] font-mono text-emerald-700 font-bold">${
+              veh.monitored === 1 ? 'Live GPS Monitored' : 'Scheduled'
+            }</span>
           </div>
-          <div class="text-slate-600 mt-1">Status: <strong class="${
+          <div class="text-slate-600 mt-1">Load: <strong class="${
             veh.load === 'SEA' ? 'text-emerald-700' : veh.load === 'SDA' ? 'text-amber-700' : 'text-rose-700'
-          }">${loadLabel}</strong></div>
-          <div class="text-slate-500 text-[11px] mt-0.5">Speed: <span class="font-mono">${veh.speedKmH} km/h</span> · ${veh.type === 'DD' ? 'Double Deck' : 'Single Deck'}</div>
+          }">${loadLabel}</strong> · Type: <strong>${veh.type || 'SD'}</strong></div>
+          <div class="text-slate-500 text-[11px] mt-0.5 font-mono">
+            Origin: ${veh.originCode || '-'} → Dest: ${veh.destinationCode || '-'}
+          </div>
         </div>`,
         { direction: 'top', offset: [0, -12], opacity: 0.95 }
       );
@@ -333,7 +345,7 @@ export const BusMap: React.FC<BusMapProps> = ({
 
     if (activeRoute && Array.isArray(activeRoute.Polyline) && activeRoute.Polyline.length > 0) {
       const validPoints = activeRoute.Polyline.filter(
-        (pt) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
+        (pt: any) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
       );
 
       if (validPoints.length > 1) {

@@ -32,6 +32,17 @@ function serverlessApiPlugin(): Plugin {
             return;
           }
         }
+        if (url.pathname === '/api/busstops') {
+          try {
+            const mod = await server.ssrLoadModule('./api/busstops.ts');
+            return mod.default(req, res);
+          } catch (err: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: err.message }));
+            return;
+          }
+        }
         next();
       });
     },

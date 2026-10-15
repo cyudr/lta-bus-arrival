@@ -1,7 +1,7 @@
 import React from 'react';
-import { Radio, Server, Map, Compass, Route, Bookmark, Sparkles } from 'lucide-react';
+import { Radio, Server, Map, Bookmark, Key } from 'lucide-react';
 
-export type ActiveTab = 'radar' | 'nearby' | 'routes' | 'bookmarks';
+export type ActiveTab = 'radar' | 'bookmarks';
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -43,26 +43,6 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         <button
-          onClick={() => onChangeTab('nearby')}
-          className={`hover:text-white transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-            activeTab === 'nearby' ? 'text-emerald-400 font-semibold' : ''
-          }`}
-        >
-          <Compass className="w-4 h-4" />
-          <span>Nearby Stops</span>
-        </button>
-
-        <button
-          onClick={() => onChangeTab('routes')}
-          className={`hover:text-white transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
-            activeTab === 'routes' ? 'text-emerald-400 font-semibold' : ''
-          }`}
-        >
-          <Route className="w-4 h-4" />
-          <span>Bus Routes</span>
-        </button>
-
-        <button
           onClick={() => onChangeTab('bookmarks')}
           className={`hover:text-white transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${
             activeTab === 'bookmarks' ? 'text-emerald-400 font-semibold' : ''
@@ -73,17 +53,17 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
       </nav>
 
-      {/* Zone 3: 1 Primary Action (Backend & Data Source Config) */}
+      {/* Zone 3: 1 Primary Action (LTA DataMall API Config) */}
       <div className="flex items-center gap-3 shrink-0">
         <button
           onClick={onOpenBackendConfig}
           className="px-3 sm:px-3.5 py-1.5 sm:py-2 text-xs font-semibold text-slate-100 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 rounded-lg hover:border-emerald-500/50 transition-all flex items-center gap-2 whitespace-nowrap shrink-0 shadow-sm"
         >
-          <Server className={`w-3.5 h-3.5 ${isBackendMode ? 'text-emerald-400' : 'text-slate-400'}`} />
-          <span>{isBackendMode ? 'Backend Connected' : 'LTA Data Settings'}</span>
+          <Key className={`w-3.5 h-3.5 ${isBackendMode ? 'text-emerald-400' : 'text-amber-400'}`} />
+          <span>{isBackendMode ? 'LTA Key Active' : 'Configure LTA Key'}</span>
           <span
             className={`w-2 h-2 rounded-full ${
-              isBackendMode ? 'bg-emerald-400' : 'bg-slate-500'
+              isBackendMode ? 'bg-emerald-400' : 'bg-amber-400 animate-ping'
             }`}
           />
         </button>

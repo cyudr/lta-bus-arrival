@@ -1,26 +1,38 @@
-export type BusLoad = 'SEA' | 'SDA' | 'LSD'; // Seats Available, Standing Available, Limited Standing
-export type BusType = 'SD' | 'DD' | 'BD'; // Single Deck, Double Deck, Bendy Bus
-export type BusOperator = 'SBST' | 'SMRT' | 'TTS' | 'GAS'; // SBS Transit, SMRT, Tower Transit, Go-Ahead Singapore
+export type BusLoad = 'SEA' | 'SDA' | 'LSD' | ''; // SEA: Seats Available, SDA: Standing Available, LSD: Limited Standing
+export type BusType = 'SD' | 'DD' | 'BD' | ''; // SD: Single Deck, DD: Double Deck, BD: Bendy
+export type BusOperator = 'SBST' | 'SMRT' | 'TTS' | 'GAS' | string; // SBS Transit, SMRT, Tower Transit, Go-Ahead Singapore
 
 export interface BusArrivalTiming {
-  EstimatedArrival: string; // ISO string
+  OriginCode: string;
+  DestinationCode: string;
+  EstimatedArrival: string; // ISO 8601 string in GMT+8 (SST)
+  Monitored: number; // 0 = based on schedule, 1 = estimated based on live bus location
   Latitude: number;
   Longitude: number;
-  VisitNumber: number;
+  VisitNumber: number | string;
   Load: BusLoad;
-  Feature: 'WAB' | '';
+  Feature: 'WAB' | '' | string;
   Type: BusType;
-  Speed?: number;
 }
 
 export interface BusServiceArrival {
   ServiceNo: string;
   Operator: BusOperator;
-  DestinationCode?: string;
-  DestinationName?: string;
   NextBus: BusArrivalTiming | null;
   NextBus2: BusArrivalTiming | null;
   NextBus3: BusArrivalTiming | null;
+}
+
+export interface LtaBusArrivalApiResponse {
+  'odata.metadata'?: string;
+  BusStopCode: string;
+  Services: Array<{
+    ServiceNo: string;
+    Operator: string;
+    NextBus?: Partial<BusArrivalTiming & { Latitude: string; Longitude: string; VisitNumber: string }>;
+    NextBus2?: Partial<BusArrivalTiming & { Latitude: string; Longitude: string; VisitNumber: string }>;
+    NextBus3?: Partial<BusArrivalTiming & { Latitude: string; Longitude: string; VisitNumber: string }>;
+  }>;
 }
 
 export interface BusStop {
@@ -30,61 +42,35 @@ export interface BusStop {
   Latitude: number;
   Longitude: number;
   mrtConnections?: string[];
-  services: string[];
-}
-
-export interface BusRouteStop {
-  StopSequence: number;
-  BusStopCode: string;
-  Distance: number; // in kilometers
-}
-
-export interface BusRoute {
-  ServiceNo: string;
-  Operator: BusOperator;
-  Direction: 1 | 2;
-  OriginCode: string;
-  OriginName: string;
-  DestinationCode: string;
-  DestinationName: string;
-  Category: 'Trunk' | 'Feeder' | 'Express' | 'City Direct';
-  OperatingHours: {
-    firstBusWeekday: string;
-    lastBusWeekday: string;
-    firstBusWeekend: string;
-    lastBusWeekend: string;
-  };
-  Stops: BusRouteStop[];
-  Polyline?: [number, number][]; // GPS coordinates for route line
+  services?: string[];
 }
 
 export interface LiveVehicle {
   id: string;
   serviceNo: string;
-  operator: BusOperator;
+  operator: string;
   lat: number;
   lng: number;
-  heading: number; // in degrees (0-360)
+  heading: number;
   load: BusLoad;
   type: BusType;
-  feature: 'WAB' | '';
-  nextStopCode: string;
-  currentSegmentProgress: number; // 0 to 1
-  speedKmH: number;
-  etaToNextStopSeconds: number;
+  feature: string;
+  monitored: number;
+  originCode: string;
+  destinationCode: string;
+  estimatedArrival: string;
+  targetStopCode: string;
 }
 
 export interface BookmarkItem {
   id: string;
   busStopCode: string;
-  serviceNo?: string;
   customLabel?: string;
   addedAt: number;
 }
 
 export interface ApiConfiguration {
-  mode: 'simulation' | 'backend';
-  customBackendUrl: string;
-  ltaAccountKey?: string;
+  endpointUrl: string;
+  ltaAccountKey: string;
   refreshIntervalSeconds: number;
 }

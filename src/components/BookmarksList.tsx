@@ -1,13 +1,13 @@
 import React from 'react';
 import { BookmarkItem, BusStop } from '../types/bus';
-import { BusService } from '../services/busService';
-import { Star, Trash2, ArrowRight, MapPin, Bus } from 'lucide-react';
+import { Star, Trash2 } from 'lucide-react';
 
 interface BookmarksListProps {
   bookmarks: BookmarkItem[];
   onSelectStop: (stop: BusStop) => void;
   onRemoveBookmark: (busStopCode: string) => void;
   selectedStopCode?: string;
+  stops?: BusStop[];
 }
 
 export const BookmarksList: React.FC<BookmarksListProps> = ({
@@ -15,6 +15,7 @@ export const BookmarksList: React.FC<BookmarksListProps> = ({
   onSelectStop,
   onRemoveBookmark,
   selectedStopCode,
+  stops = [],
 }) => {
   if (bookmarks.length === 0) {
     return (
@@ -39,7 +40,15 @@ export const BookmarksList: React.FC<BookmarksListProps> = ({
       </div>
 
       {bookmarks.map((bm) => {
-        const stop = BusService.getStopByCode(bm.busStopCode);
+        const found = stops.find((s) => s.BusStopCode === bm.busStopCode);
+        const stop: BusStop = found || {
+          BusStopCode: bm.busStopCode,
+          RoadName: 'Singapore',
+          Description: bm.customLabel || `Bus Stop ${bm.busStopCode}`,
+          Latitude: 1.3044,
+          Longitude: 103.8318,
+        };
+
         const isSelected = selectedStopCode === bm.busStopCode;
 
         return (
@@ -52,9 +61,7 @@ export const BookmarksList: React.FC<BookmarksListProps> = ({
             }`}
           >
             <button
-              onClick={() => {
-                if (stop) onSelectStop(stop);
-              }}
+              onClick={() => onSelectStop(stop)}
               className="min-w-0 text-left flex-1 group"
             >
               <div className="flex items-center gap-2 mb-1">
@@ -69,29 +76,11 @@ export const BookmarksList: React.FC<BookmarksListProps> = ({
               </div>
 
               <div className="font-semibold text-sm text-slate-100 group-hover:text-emerald-400 transition-colors truncate">
-                {stop?.Description || `Stop ${bm.busStopCode}`}
+                {stop.Description}
               </div>
               <div className="text-xs text-slate-400 truncate mt-0.5">
-                {stop?.RoadName || 'Singapore'}
+                {stop.RoadName}
               </div>
-
-              {stop?.services && (
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {stop.services.slice(0, 6).map((srv) => (
-                    <span
-                      key={srv}
-                      className="px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded text-[10px] font-mono"
-                    >
-                      {srv}
-                    </span>
-                  ))}
-                  {stop.services.length > 6 && (
-                    <span className="text-[10px] text-slate-500 self-center">
-                      +{stop.services.length - 6} more
-                    </span>
-                  )}
-                </div>
-              )}
             </button>
 
             <button

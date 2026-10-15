@@ -8,46 +8,40 @@ import {
   BusStop,
   BusServiceArrival,
   LiveVehicle,
-  BusRoute,
   ApiConfiguration,
   BookmarkItem,
 } from './types/bus';
-import { BusService, DEFAULT_CONFIG } from './services/busService';
-import { SINGAPORE_BUS_STOPS, POPULAR_BUS_SERVICES } from './data/singaporeBuses';
+import { BusService } from './services/busService';
 import { Header, ActiveTab } from './components/Header';
 import { BusMap } from './components/BusMap';
 import { ArrivalBoard } from './components/ArrivalBoard';
-import { RouteViewerModal } from './components/RouteViewerModal';
 import { BackendConfigModal } from './components/BackendConfigModal';
-import { NearbyStopsList } from './components/NearbyStopsList';
-import { RoutesDirectory } from './components/RoutesDirectory';
 import { BookmarksList } from './components/BookmarksList';
 import { StopSearchModal } from './components/StopSearchModal';
 import { MobileTabBar } from './components/MobileTabBar';
-import { Search, MapPin, Radio, Compass, RefreshCw } from 'lucide-react';
+import { Search, MapPin, Radio, Key, RefreshCw } from 'lucide-react';
+
+// Documentation example stop from Image 1 & 2
+const DEFAULT_DOC_STOP: BusStop = {
+  BusStopCode: '83139',
+  RoadName: 'Victoria St / Marine Parade',
+  Description: 'Bus Stop 83139 (LTA Example)',
+  Latitude: 1.3044,
+  Longitude: 103.8318,
+  services: ['15'],
+};
 
 export default function App() {
   const [config, setConfig] = useState<ApiConfiguration>(BusService.getConfig());
   const [activeTab, setActiveTab] = useState<ActiveTab>('radar');
-  const [stops] = useState<BusStop[]>(SINGAPORE_BUS_STOPS);
-  
-  // Default selected stop: Opp Orchard Stn / ION Orchard (09048)
-  const [selectedStop, setSelectedStop] = useState<BusStop>(
-    SINGAPORE_BUS_STOPS[0] || {
-      BusStopCode: '09048',
-      RoadName: 'Orchard Rd',
-      Description: 'Opp Orchard Stn / ION Orchard',
-      Latitude: 1.3044,
-      Longitude: 103.8318,
-      services: ['7', '14', '16', '36', '65', '106', '111', '124', '174', '175', '190'],
-    }
-  );
+  const [stops, setStops] = useState<BusStop[]>([DEFAULT_DOC_STOP]);
+  const [selectedStop, setSelectedStop] = useState<BusStop>(DEFAULT_DOC_STOP);
 
   const [arrivals, setArrivals] = useState<BusServiceArrival[]>([]);
-  const [isLoadingArrivals, setIsLoadingArrivals] = useState(false);
   const [liveVehicles, setLiveVehicles] = useState<LiveVehicle[]>([]);
-  const [activeRoute, setActiveRoute] = useState<BusRoute | null>(null);
-  const [inspectingRouteService, setInspectingRouteService] = useState<string | null>(null);
+  const [rawApiResponse, setRawApiResponse] = useState<any>(null);
+  const [apiError, setApiError] = useState<string | undefined>(undefined);
+  const [isLoadingArrivals, setIsLoadingArrivals] = useState(false);
 
   // User Geolocation
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>({
@@ -63,49 +57,74 @@ export default function App() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
-  // Fetch Arrivals for the selected stop
+  // Fetch official bus stops from LTA DataMall
+  useEffect(() => {
+    let isMounted = true;
+    BusService.fetchOfficialBusStops().then((loadedStops) => {
+      if (isMounted && loadedStops.length > 0) {
+        setStops((prev) => {
+          const combined = [...prev];
+          loadedStops.forEach((s) => {
+            if (!combined.some((c) => c.BusStopCode === s.BusStopCode)) {
+              combined.push(s);
+            }
+          });
+          return combined;
+        });
+
+        // If the default stop exists in the official list, enrich it
+        const official = loadedStops.find((s) => s.BusStopCode === '83139');
+        if (official) {
+          setSelectedStop(official);
+        }
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Fetch real arrivals from LTA DataMall v3 API (No simulation or hardcoded fallbacks)
   const fetchArrivals = useCallback(async (stopCode: string) => {
     setIsLoadingArrivals(true);
+    setApiError(undefined);
+
     try {
-      const data = await BusService.getArrivalsForStop(stopCode);
-      setArrivals(data);
-    } catch (err) {
-      console.error('Failed to load arrivals:', err);
+      const result = await BusService.getArrivalsForStop(stopCode);
+      setArrivals(result.services);
+      setLiveVehicles(result.liveVehicles);
+      setRawApiResponse(result.rawResponse);
+
+      if (result.error) {
+        setApiError(result.error);
+      }
+    } catch (err: any) {
+      setApiError(err.message || 'Failed to fetch arrival data from LTA DataMall');
+      setArrivals([]);
+      setLiveVehicles([]);
     } finally {
       setIsLoadingArrivals(false);
     }
   }, []);
 
-  // Initial fetch and on stop change
+  // Fetch when selectedStop changes
   useEffect(() => {
-    if (selectedStop) {
+    if (selectedStop && selectedStop.BusStopCode) {
       fetchArrivals(selectedStop.BusStopCode);
     }
   }, [selectedStop, fetchArrivals]);
 
-  // Periodic arrival refresh
+  // Periodic refresh: 20 seconds as documented in LTA BusArrival specification
   useEffect(() => {
-    const intervalSeconds = config.refreshIntervalSeconds || 15;
+    const intervalSeconds = config.refreshIntervalSeconds || 20;
     const interval = setInterval(() => {
-      if (selectedStop) {
+      if (selectedStop && selectedStop.BusStopCode) {
         fetchArrivals(selectedStop.BusStopCode);
       }
     }, intervalSeconds * 1000);
 
     return () => clearInterval(interval);
   }, [selectedStop, config.refreshIntervalSeconds, fetchArrivals]);
-
-  // High-frequency vehicle simulation loop (every 2.5s for smooth motion)
-  useEffect(() => {
-    const updateVehicles = () => {
-      const updated = BusService.getLiveVehicles();
-      setLiveVehicles(updated);
-    };
-
-    updateVehicles();
-    const interval = setInterval(updateVehicles, 2500);
-    return () => clearInterval(interval);
-  }, []);
 
   // Keyboard shortcut for search (Cmd/Ctrl + K)
   useEffect(() => {
@@ -119,7 +138,29 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Geolocation handler
+  // Handle direct query for any bus stop code
+  const handleQueryStopCode = (code: string) => {
+    const trimmed = code.trim();
+    if (!trimmed) return;
+
+    // Check if stop exists in loaded stops
+    const existing = stops.find((s) => s.BusStopCode === trimmed);
+    if (existing) {
+      setSelectedStop(existing);
+    } else {
+      const newStop: BusStop = {
+        BusStopCode: trimmed,
+        RoadName: 'Singapore',
+        Description: `Bus Stop ${trimmed}`,
+        Latitude: selectedStop.Latitude,
+        Longitude: selectedStop.Longitude,
+      };
+      setStops((prev) => [newStop, ...prev]);
+      setSelectedStop(newStop);
+    }
+  };
+
+  // Geolocation
   const handleLocateMe = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser.');
@@ -131,29 +172,13 @@ export default function App() {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setUserLocation(coords);
         setIsLocating(false);
-
-        // Find nearest stop and select it
-        const nearest = BusService.getNearbyStops(coords.lat, coords.lng, 1);
-        if (nearest.length > 0) {
-          setSelectedStop(nearest[0]);
-        }
       },
       (err) => {
-        console.warn('Geolocation failed or denied, using simulated Orchard location:', err);
+        console.warn('Geolocation failed:', err);
         setIsLocating(false);
-        setUserLocation({ lat: 1.3044, lng: 103.8318 });
       },
       { timeout: 8000 }
     );
-  };
-
-  const handleSetSimulatedLocation = (label: string, lat: number, lng: number) => {
-    const coords = { lat, lng };
-    setUserLocation(coords);
-    const nearest = BusService.getNearbyStops(lat, lng, 1);
-    if (nearest.length > 0) {
-      setSelectedStop(nearest[0]);
-    }
   };
 
   const handleToggleBookmark = () => {
@@ -175,36 +200,6 @@ export default function App() {
     }
   };
 
-  const handleSelectRouteFromDirectory = (route: BusRoute) => {
-    setActiveRoute(route);
-    setInspectingRouteService(route.ServiceNo);
-    // Pan to first stop on route
-    if (route.Stops.length > 0) {
-      const firstStop = BusService.getStopByCode(route.Stops[0].BusStopCode);
-      if (firstStop) {
-        setSelectedStop(firstStop);
-      }
-    }
-  };
-
-  // Nearby stops list calculated from userLocation
-  const nearbyStops = useMemo(() => {
-    const lat = userLocation?.lat || 1.3044;
-    const lng = userLocation?.lng || 103.8318;
-    return BusService.getNearbyStops(lat, lng, 12);
-  }, [userLocation]);
-
-  // Distance from user to current selected stop
-  const selectedStopDistance = useMemo(() => {
-    if (!userLocation || !selectedStop) return undefined;
-    return BusService.calculateDistanceMeters(
-      userLocation.lat,
-      userLocation.lng,
-      selectedStop.Latitude,
-      selectedStop.Longitude
-    );
-  }, [userLocation, selectedStop]);
-
   return (
     <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* 3-Zone Top Bar */}
@@ -212,21 +207,21 @@ export default function App() {
         activeTab={activeTab}
         onChangeTab={setActiveTab}
         onOpenBackendConfig={() => setIsConfigOpen(true)}
-        isBackendMode={config.mode === 'backend'}
+        isBackendMode={Boolean(config.ltaAccountKey && config.ltaAccountKey.trim())}
         activeBusCount={liveVehicles.length}
       />
 
-      {/* Main Workspace Layout */}
+      {/* Main Workspace */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden relative">
-        {/* Left Control Panel / Tab Views (Desktop: fixed width, Mobile: full or toggled) */}
+        {/* Left Panel: Real LTA Arrival Board / Bookmarks */}
         <div
-          className={`flex flex-col w-full md:w-[420px] lg:w-[460px] xl:w-[500px] shrink-0 border-r border-slate-800 bg-slate-900/95 z-10 transition-all ${
+          className={`flex flex-col w-full md:w-[440px] lg:w-[480px] xl:w-[520px] shrink-0 border-r border-slate-800 bg-slate-900/95 z-10 transition-all ${
             activeTab === 'radar'
-              ? 'h-[45vh] md:h-full order-2 md:order-1'
+              ? 'h-[50vh] md:h-full order-2 md:order-1'
               : 'h-[calc(100vh-3.5rem-3.5rem)] md:h-full order-1'
           }`}
         >
-          {/* Universal Quick Search Trigger Bar */}
+          {/* Quick Search Bar */}
           <div className="p-3 bg-slate-950/80 border-b border-slate-800 flex items-center gap-2">
             <button
               onClick={() => setIsSearchOpen(true)}
@@ -234,7 +229,7 @@ export default function App() {
             >
               <div className="flex items-center gap-2 truncate">
                 <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span className="truncate">Search any Singapore bus stop, road, or service...</span>
+                <span className="truncate">Search any Singapore LTA BusStopCode (e.g. 83139)...</span>
               </div>
               <kbd className="hidden sm:inline-block font-mono text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400 border border-slate-700">
                 ⌘K
@@ -242,9 +237,9 @@ export default function App() {
             </button>
           </div>
 
-          {/* Tab Content Panes */}
+          {/* Panes */}
           <div className="flex-1 overflow-hidden relative">
-            {activeTab === 'radar' && selectedStop && (
+            {activeTab === 'radar' && (
               <ArrivalBoard
                 stop={selectedStop}
                 arrivals={arrivals}
@@ -252,37 +247,17 @@ export default function App() {
                 onRefresh={() => fetchArrivals(selectedStop.BusStopCode)}
                 isBookmarked={BusService.isBookmarked(selectedStop.BusStopCode)}
                 onToggleBookmark={handleToggleBookmark}
-                onViewRoute={(srvNo) => {
-                  const r = POPULAR_BUS_SERVICES.find((p) => p.ServiceNo === srvNo);
-                  if (r) setActiveRoute(r);
-                  setInspectingRouteService(srvNo);
-                }}
+                apiError={apiError}
+                rawApiResponse={rawApiResponse}
+                onOpenSettings={() => setIsConfigOpen(true)}
+                onQueryStopCode={handleQueryStopCode}
                 onTrackVehicleOnMap={(lat, lng) => {
-                  // Handled via map flyTo inside map or state
+                  setSelectedStop((prev) => ({
+                    ...prev,
+                    Latitude: lat,
+                    Longitude: lng,
+                  }));
                 }}
-                userDistanceMeters={selectedStopDistance}
-              />
-            )}
-
-            {activeTab === 'nearby' && (
-              <NearbyStopsList
-                stops={nearbyStops}
-                selectedStopCode={selectedStop?.BusStopCode}
-                onSelectStop={(stop) => {
-                  setSelectedStop(stop);
-                  setActiveTab('radar');
-                }}
-                userLocation={userLocation}
-                onSetSimulatedLocation={handleSetSimulatedLocation}
-                onLocateMe={handleLocateMe}
-                isLocating={isLocating}
-              />
-            )}
-
-            {activeTab === 'routes' && (
-              <RoutesDirectory
-                onSelectRoute={handleSelectRouteFromDirectory}
-                activeRouteServiceNo={activeRoute?.ServiceNo}
               />
             )}
 
@@ -300,9 +275,9 @@ export default function App() {
           </div>
         </div>
 
-        {/* Right Section: The Live Radar Map */}
+        {/* Right Section: Interactive Google Map with live LTA buses */}
         <div
-          className={`flex-1 relative h-[55vh] md:h-full order-1 md:order-2 ${
+          className={`flex-1 relative h-[50vh] md:h-full order-1 md:order-2 ${
             activeTab !== 'radar' ? 'hidden md:block' : 'block'
           }`}
         >
@@ -314,7 +289,7 @@ export default function App() {
               setActiveTab('radar');
             }}
             liveVehicles={liveVehicles}
-            activeRoute={activeRoute}
+            activeRoute={null}
             userLocation={userLocation}
             onLocateMe={handleLocateMe}
             isLocating={isLocating}
@@ -333,18 +308,6 @@ export default function App() {
           setSelectedStop(stop);
           setActiveTab('radar');
         }}
-      />
-
-      {/* Detailed Route Modal */}
-      <RouteViewerModal
-        serviceNo={inspectingRouteService}
-        onClose={() => setInspectingRouteService(null)}
-        onSelectStop={(stop) => {
-          setSelectedStop(stop);
-          setActiveTab('radar');
-        }}
-        liveVehicles={liveVehicles}
-        currentSelectedStopCode={selectedStop?.BusStopCode}
       />
 
       {/* Backend & LTA API Integration Modal */}

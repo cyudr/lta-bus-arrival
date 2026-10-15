@@ -193,23 +193,32 @@ export class BusService {
         const segmentFraction = floatIndex - segmentIndex;
 
         const startPt = poly[segmentIndex];
-        const endPt = poly[segmentIndex + 1];
+        const endPt = poly[segmentIndex + 1] || startPt;
 
-        // Linear interpolation
-        veh.lat = startPt[0] + (endPt[0] - startPt[0]) * segmentFraction;
-        veh.lng = startPt[1] + (endPt[1] - startPt[1]) * segmentFraction;
+        if (startPt && endPt && Number.isFinite(startPt[0]) && Number.isFinite(endPt[0])) {
+          const fraction = Number.isFinite(segmentFraction) ? Math.max(0, Math.min(1, segmentFraction)) : 0;
+          veh.lat = startPt[0] + (endPt[0] - startPt[0]) * fraction;
+          veh.lng = startPt[1] + (endPt[1] - startPt[1]) * fraction;
 
-        // Calculate heading in degrees
-        const dLng = endPt[1] - startPt[1];
-        const dLat = endPt[0] - startPt[0];
-        const rad = Math.atan2(dLng, dLat);
-        veh.heading = (rad * 180) / Math.PI;
+          // Calculate heading in degrees
+          const dLng = endPt[1] - startPt[1];
+          const dLat = endPt[0] - startPt[0];
+          const rad = Math.atan2(dLng, dLat);
+          veh.heading = Number.isFinite(rad) ? (rad * 180) / Math.PI : 90;
+        }
+
+        // Final safety guard against NaN coordinates
+        if (!Number.isFinite(veh.lat) || !Number.isFinite(veh.lng)) {
+          veh.lat = 1.3044;
+          veh.lng = 103.8318;
+          veh.heading = 90;
+        }
 
         // Dynamic speed between 25-45 km/h
         veh.speedKmH = Math.round(28 + Math.sin(now / 5000 + hash) * 12);
         
         // Estimated seconds to next stop
-        veh.etaToNextStopSeconds = Math.max(10, Math.round((1 - segmentFraction) * 120));
+        veh.etaToNextStopSeconds = Math.max(10, Math.round((1 - (segmentFraction || 0)) * 120));
       }
       vehicles.push({ ...veh });
     });

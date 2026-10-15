@@ -1,7 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { BusStop, LiveVehicle, BusRoute } from '../types/bus';
-import { Locate, Navigation, Layers, RefreshCw } from 'lucide-react';
+import { Locate, Navigation, Layers, Maximize2, Minimize2, Map as MapIcon, Compass } from 'lucide-react';
 
 interface BusMapProps {
   stops: BusStop[];
@@ -13,6 +13,32 @@ interface BusMapProps {
   onLocateMe: () => void;
   isLocating: boolean;
 }
+
+type MapLayerType = 'google-street' | 'google-hybrid' | 'google-terrain' | 'carto-dark';
+
+const TILE_SERVERS: Record<MapLayerType, { name: string; url: string; maxZoom: number; subdomains?: string[] }> = {
+  'google-street': {
+    name: 'Map',
+    url: 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    maxZoom: 20,
+  },
+  'google-hybrid': {
+    name: 'Satellite',
+    url: 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    maxZoom: 20,
+  },
+  'google-terrain': {
+    name: 'Terrain',
+    url: 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+    maxZoom: 20,
+  },
+  'carto-dark': {
+    name: 'Dark Radar',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    maxZoom: 19,
+    subdomains: ['a', 'b', 'c', 'd'],
+  },
+};
 
 export const BusMap: React.FC<BusMapProps> = ({
   stops,
@@ -26,44 +52,140 @@ export const BusMap: React.FC<BusMapProps> = ({
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const stopMarkersLayerRef = useRef<L.LayerGroup | null>(null);
   const busMarkersLayerRef = useRef<L.LayerGroup | null>(null);
   const routePolylineLayerRef = useRef<L.Polyline | null>(null);
   const userMarkerRef = useRef<L.Marker | null>(null);
+  const isFirstLoadRef = useRef(true);
+
+  const [activeLayer, setActiveLayer] = useState<MapLayerType>('google-street');
+  const [centerCoords, setCenterCoords] = useState<{ lat: number; lng: number }>({
+    lat: 1.3044,
+    lng: 103.8318,
+  });
+  const [currentZoom, setCurrentZoom] = useState(15);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
-    // Centered on Singapore central / Orchard
+    const initialLat = selectedStop?.Latitude && Number.isFinite(selectedStop.Latitude) ? selectedStop.Latitude : 1.3044;
+    const initialLng = selectedStop?.Longitude && Number.isFinite(selectedStop.Longitude) ? selectedStop.Longitude : 103.8318;
+
     const map = L.map(mapContainerRef.current, {
-      center: [1.3044, 103.8318],
-      zoom: 14,
+      center: [initialLat, initialLng],
+      zoom: 15,
       zoomControl: false,
       attributionControl: false,
     });
 
-    // Dark high-contrast CartoDB tiles suitable for transit radar
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      maxZoom: 19,
-      subdomains: 'abcd',
+    const activeConfig = TILE_SERVERS['google-street'];
+    const tileLayer = L.tileLayer(activeConfig.url, {
+      maxZoom: activeConfig.maxZoom,
+      subdomains: activeConfig.subdomains || 'abc',
     }).addTo(map);
 
-    // Zoom control at bottom right for ergonomic desktop & mobile reach
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-
+    tileLayerRef.current = tileLayer;
     stopMarkersLayerRef.current = L.layerGroup().addTo(map);
     busMarkersLayerRef.current = L.layerGroup().addTo(map);
 
+    map.on('move', () => {
+      const center = map.getCenter();
+      if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+        setCenterCoords({ lat: center.lat, lng: center.lng });
+      }
+      const zoom = map.getZoom();
+      if (Number.isFinite(zoom)) {
+        setCurrentZoom(Math.round(zoom));
+      }
+    });
+
     mapRef.current = map;
 
+    // Handle container resizing
+    const resizeObserver = new ResizeObserver(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    });
+    if (mapContainerRef.current) {
+      resizeObserver.observe(mapContainerRef.current);
+    }
+
+    // Force size check after DOM tick
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    }, 200);
+
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  // Update stop markers
+  // Switch Tile Layer when activeLayer changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (tileLayerRef.current) {
+      tileLayerRef.current.remove();
+    }
+
+    const config = TILE_SERVERS[activeLayer];
+    const newLayer = L.tileLayer(config.url, {
+      maxZoom: config.maxZoom,
+      subdomains: config.subdomains || 'abc',
+    }).addTo(map);
+
+    tileLayerRef.current = newLayer;
+  }, [activeLayer]);
+
+  // Center on selected stop when it changes (Fixes NaN, NaN issue)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !selectedStop) return;
+
+    const targetLat = selectedStop.Latitude;
+    const targetLng = selectedStop.Longitude;
+
+    // Strict validation
+    if (!Number.isFinite(targetLat) || !Number.isFinite(targetLng)) {
+      return;
+    }
+
+    const currentMapZoom = typeof map.getZoom === 'function' ? map.getZoom() : 15;
+    const safeZoom = Number.isFinite(currentMapZoom) ? Math.max(currentMapZoom, 15) : 15;
+
+    // If first load or container not yet measured, use safe setView
+    const mapSize = map.getSize();
+    const hasZeroDimension = !mapSize || mapSize.x === 0 || mapSize.y === 0;
+
+    if (isFirstLoadRef.current || hasZeroDimension) {
+      isFirstLoadRef.current = false;
+      map.invalidateSize();
+      map.setView([targetLat, targetLng], safeZoom);
+      return;
+    }
+
+    // Safe animated flyTo
+    try {
+      map.flyTo([targetLat, targetLng], safeZoom, {
+        duration: 0.8,
+        easeLinearity: 0.25,
+      });
+    } catch (e) {
+      // Fallback if animation frame math fails
+      map.setView([targetLat, targetLng], safeZoom);
+    }
+  }, [selectedStop]);
+
+  // Update stop markers with coordinate safety
   useEffect(() => {
     const map = mapRef.current;
     const layer = stopMarkersLayerRef.current;
@@ -72,10 +194,17 @@ export const BusMap: React.FC<BusMapProps> = ({
     layer.clearLayers();
 
     stops.forEach((stop) => {
+      // Validate stop coordinates
+      if (!Number.isFinite(stop.Latitude) || !Number.isFinite(stop.Longitude)) {
+        return;
+      }
+
       const isSelected = selectedStop?.BusStopCode === stop.BusStopCode;
 
       const stopIconHtml = `
-        <div class="relative group cursor-pointer transition-transform duration-200 ${isSelected ? 'scale-125 z-30' : 'hover:scale-110 z-10'}">
+        <div class="relative group cursor-pointer transition-transform duration-200 ${
+          isSelected ? 'scale-125 z-30' : 'hover:scale-110 z-10'
+        }">
           ${isSelected ? '<span class="absolute -inset-1 rounded-full bg-emerald-500/40 animate-ping"></span>' : ''}
           <div class="w-7 h-7 rounded-full flex items-center justify-center font-bold text-[10px] shadow-lg border transition-colors ${
             isSelected
@@ -125,18 +254,7 @@ export const BusMap: React.FC<BusMapProps> = ({
     });
   }, [stops, selectedStop, onSelectStop]);
 
-  // Center on selected stop when it changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !selectedStop) return;
-
-    map.flyTo([selectedStop.Latitude, selectedStop.Longitude], Math.max(map.getZoom(), 15), {
-      duration: 0.8,
-      easeLinearity: 0.25,
-    });
-  }, [selectedStop]);
-
-  // Update live moving bus markers
+  // Update live moving bus markers with coordinate safety
   useEffect(() => {
     const map = mapRef.current;
     const layer = busMarkersLayerRef.current;
@@ -145,7 +263,11 @@ export const BusMap: React.FC<BusMapProps> = ({
     layer.clearLayers();
 
     liveVehicles.forEach((veh) => {
-      // Color based on capacity load
+      // Validate vehicle coordinates
+      if (!Number.isFinite(veh.lat) || !Number.isFinite(veh.lng)) {
+        return;
+      }
+
       const loadBg =
         veh.load === 'SEA'
           ? 'bg-emerald-500 text-slate-950 ring-emerald-400'
@@ -153,10 +275,12 @@ export const BusMap: React.FC<BusMapProps> = ({
           ? 'bg-amber-400 text-slate-950 ring-amber-300'
           : 'bg-rose-500 text-white ring-rose-400';
 
+      const safeHeading = Number.isFinite(veh.heading) ? veh.heading : 90;
+
       const busIconHtml = `
         <div class="relative group cursor-pointer transition-all duration-300 transform -translate-x-1/2 -translate-y-1/2">
           <div class="flex items-center gap-1 px-1.5 py-0.5 rounded-md shadow-lg border border-slate-900/40 text-[10px] font-bold ring-1 ${loadBg}">
-            <span style="display:inline-block; transform: rotate(${veh.heading}deg);" class="text-[9px]">▲</span>
+            <span style="display:inline-block; transform: rotate(${safeHeading}deg);" class="text-[9px]">▲</span>
             <span>${veh.serviceNo}</span>
             <span class="text-[8px] opacity-75 font-mono">${veh.type}</span>
           </div>
@@ -197,7 +321,7 @@ export const BusMap: React.FC<BusMapProps> = ({
     });
   }, [liveVehicles]);
 
-  // Update active route polyline
+  // Update active route polyline with coordinate safety
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -207,24 +331,35 @@ export const BusMap: React.FC<BusMapProps> = ({
       routePolylineLayerRef.current = null;
     }
 
-    if (activeRoute && activeRoute.Polyline && activeRoute.Polyline.length > 0) {
-      const polyline = L.polyline(activeRoute.Polyline, {
-        color: '#10b981',
-        weight: 5,
-        opacity: 0.85,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dashArray: undefined,
-      }).addTo(map);
+    if (activeRoute && Array.isArray(activeRoute.Polyline) && activeRoute.Polyline.length > 0) {
+      const validPoints = activeRoute.Polyline.filter(
+        (pt) => Array.isArray(pt) && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
+      );
 
-      routePolylineLayerRef.current = polyline;
+      if (validPoints.length > 1) {
+        const polyline = L.polyline(validPoints, {
+          color: '#10b981',
+          weight: 5,
+          opacity: 0.85,
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(map);
 
-      // Fit map bounds to show full route nicely
-      map.fitBounds(polyline.getBounds(), { padding: [50, 50], maxZoom: 15 });
+        routePolylineLayerRef.current = polyline;
+
+        try {
+          const bounds = polyline.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 15 });
+          }
+        } catch {
+          // ignore
+        }
+      }
     }
   }, [activeRoute]);
 
-  // Update user location marker
+  // Update user location marker with coordinate safety
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -234,7 +369,7 @@ export const BusMap: React.FC<BusMapProps> = ({
       userMarkerRef.current = null;
     }
 
-    if (userLocation) {
+    if (userLocation && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng)) {
       const userHtml = `
         <div class="relative">
           <span class="absolute -inset-2 rounded-full bg-blue-500/30 animate-ping"></span>
@@ -253,54 +388,162 @@ export const BusMap: React.FC<BusMapProps> = ({
     }
   }, [userLocation]);
 
+  // Google Maps style Zoom controls
+  const handleZoomIn = () => {
+    if (mapRef.current) {
+      mapRef.current.zoomIn();
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (mapRef.current) {
+      mapRef.current.zoomOut();
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (!mapContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      mapContainerRef.current.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
+
   return (
-    <div className="relative w-full h-full min-h-[380px] bg-slate-900 overflow-hidden">
+    <div className="relative w-full h-full min-h-[380px] bg-slate-900 overflow-hidden select-none">
+      {/* Leaflet Map Canvas */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Floating Map Actions */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col gap-2">
+      {/* Google Maps Style Layer Switcher (Top Left) */}
+      <div className="absolute top-3.5 left-3.5 z-20 flex items-center bg-white/95 dark:bg-slate-900/95 backdrop-blur-md rounded-lg shadow-md border border-slate-300 dark:border-slate-800 p-0.5 text-xs font-semibold overflow-hidden">
         <button
-          onClick={onLocateMe}
-          disabled={isLocating}
-          title="Locate nearest Singapore bus stop"
-          aria-label="Locate nearest Singapore bus stop"
-          className="w-10 h-10 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 shadow-lg backdrop-blur-md flex items-center justify-center transition-transform active:scale-95 disabled:opacity-50"
+          onClick={() => setActiveLayer('google-street')}
+          className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            activeLayer === 'google-street'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
         >
-          <Locate className={`w-5 h-5 ${isLocating ? 'animate-spin text-emerald-400' : 'text-slate-300'}`} />
+          <MapIcon className="w-3.5 h-3.5" />
+          <span>Map</span>
         </button>
 
         <button
-          onClick={() => {
-            if (mapRef.current) {
-              mapRef.current.flyTo([1.3521, 103.8198], 12);
-            }
-          }}
-          title="Reset to whole Singapore view"
-          aria-label="Reset to whole Singapore view"
-          className="w-10 h-10 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 hover:text-white border border-slate-700/80 shadow-lg backdrop-blur-md flex items-center justify-center transition-transform active:scale-95"
+          onClick={() => setActiveLayer('google-hybrid')}
+          className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            activeLayer === 'google-hybrid'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
         >
-          <Navigation className="w-5 h-5 text-slate-300" />
+          <Layers className="w-3.5 h-3.5" />
+          <span>Satellite</span>
+        </button>
+
+        <button
+          onClick={() => setActiveLayer('carto-dark')}
+          className={`px-3 py-1.5 rounded-md transition-colors flex items-center gap-1.5 ${
+            activeLayer === 'carto-dark'
+              ? 'bg-blue-600 text-white shadow-sm'
+              : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <span>Dark</span>
         </button>
       </div>
 
-      {/* Live Map Legend Bar */}
-      <div className="absolute bottom-4 left-4 z-20 pointer-events-auto">
-        <div className="flex items-center gap-3 px-3 py-1.5 rounded-lg bg-slate-950/85 backdrop-blur-md border border-slate-800 text-slate-300 text-[11px] shadow-lg">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-            <span>Seats (SEA)</span>
+      {/* Google Maps Styled Control Cluster (Bottom Right) */}
+      <div className="absolute bottom-6 right-4 z-20 flex flex-col items-center gap-2">
+        {/* Fullscreen Toggle */}
+        <button
+          onClick={toggleFullscreen}
+          title="Toggle Fullscreen"
+          aria-label="Toggle Fullscreen"
+          className="w-10 h-10 rounded-lg bg-white/95 dark:bg-slate-900/95 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700/80 shadow-md flex items-center justify-center transition-all active:scale-95"
+        >
+          {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+        </button>
+
+        {/* Locate Me Button */}
+        <button
+          onClick={onLocateMe}
+          disabled={isLocating}
+          title="Show My Location"
+          aria-label="Show My Location"
+          className="w-10 h-10 rounded-lg bg-white/95 dark:bg-slate-900/95 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700/80 shadow-md flex items-center justify-center transition-all active:scale-95 disabled:opacity-50"
+        >
+          <Locate className={`w-4 h-4 ${isLocating ? 'animate-spin text-blue-500' : 'text-blue-600 dark:text-blue-400'}`} />
+        </button>
+
+        {/* Reset View Button */}
+        <button
+          onClick={() => {
+            if (mapRef.current) {
+              mapRef.current.setView([1.3521, 103.8198], 12);
+            }
+          }}
+          title="Reset to Singapore Overview"
+          aria-label="Reset to Singapore Overview"
+          className="w-10 h-10 rounded-lg bg-white/95 dark:bg-slate-900/95 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700/80 shadow-md flex items-center justify-center transition-all active:scale-95"
+        >
+          <Compass className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+        </button>
+
+        {/* Google Maps Style Stacked Zoom (+ / -) */}
+        <div className="flex flex-col rounded-lg bg-white/95 dark:bg-slate-900/95 border border-slate-300 dark:border-slate-700/80 shadow-md overflow-hidden">
+          <button
+            onClick={handleZoomIn}
+            title="Zoom In"
+            aria-label="Zoom In"
+            className="w-10 h-9 flex items-center justify-center text-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors border-b border-slate-200 dark:border-slate-800 active:bg-slate-200"
+          >
+            +
+          </button>
+          <button
+            onClick={handleZoomOut}
+            title="Zoom Out"
+            aria-label="Zoom Out"
+            className="w-10 h-9 flex items-center justify-center text-lg font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors active:bg-slate-200"
+          >
+            −
+          </button>
+        </div>
+      </div>
+
+      {/* Google Map Coordinate Alignment Inspector Bar (Bottom Left) */}
+      <div className="absolute bottom-4 left-3.5 z-20 pointer-events-auto">
+        <div className="flex flex-wrap items-center gap-2.5 px-3 py-1.5 rounded-lg bg-slate-950/90 backdrop-blur-md border border-slate-800 text-slate-300 text-[11px] shadow-lg">
+          <div className="flex items-center gap-1.5 font-mono text-[10px]">
+            <span className="text-emerald-400 font-semibold">LTA DataMall & Google Map Aligned:</span>
+            <span className="text-slate-100">
+              {centerCoords.lat.toFixed(5)}°N, {centerCoords.lng.toFixed(5)}°E
+            </span>
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
-            <span>Standing (SDA)</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-            <span>Full (LSD)</span>
-          </div>
+
           <span className="text-slate-600">|</span>
+
+          <div className="flex items-center gap-2">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" />
+              <span>Seats</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span>Standing</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-rose-500" />
+              <span>Full</span>
+            </span>
+          </div>
+
+          <span className="text-slate-600">|</span>
+
           <span className="font-mono text-[10px] text-emerald-400 font-medium">
-            {liveVehicles.length} Active Buses Tracked
+            {liveVehicles.length} Buses Tracking
           </span>
         </div>
       </div>

@@ -1,0 +1,6 @@
+{
+  "name": "SG Bus Radar - Real-Time LTA Bus Tracker",
+  "description": "Live Singapore bus arrival predictions, real-time GPS fleet tracking, capacity loads, and route visualizer for Land Transport Authority (LTA) bus stops.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

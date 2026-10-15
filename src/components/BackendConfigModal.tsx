@@ -38,21 +38,33 @@ export const BackendConfigModal: React.FC<BackendConfigModalProps> = ({
         headers['AccountKey'] = formData.ltaAccountKey;
       }
 
-      const res = await fetch(`${formData.customBackendUrl.replace(/\/$/, '')}/BusArrivalv2?BusStopCode=09048`, {
-        headers,
-      });
-
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      let testUrl = formData.customBackendUrl.trim() || '/api/busarrival';
+      if (testUrl.includes('?')) {
+        testUrl += '&BusStopCode=83139';
+      } else if (testUrl.endsWith('/busarrival') || testUrl.endsWith('/busarrival.ts')) {
+        testUrl += '?BusStopCode=83139';
+      } else {
+        testUrl = `${testUrl.replace(/\/$/, '')}/BusArrival?BusStopCode=83139`;
       }
 
+      const res = await fetch(testUrl, { headers });
       const data = await res.json();
+
+      if (!res.ok) {
+        if (data && data.error === 'LTA_ACCOUNT_KEY_NOT_CONFIGURED') {
+          setTestStatus('error');
+          setTestMessage('Serverless endpoint is reachable! However, LTA_ACCOUNT_KEY is not yet configured.');
+          return;
+        }
+        throw new Error(data?.message || `HTTP ${res.status}: ${res.statusText}`);
+      }
+
       if (data && Array.isArray(data.Services)) {
         setTestStatus('success');
-        setTestMessage(`Connection successful! Retrieved ${data.Services.length} bus services from LTA endpoint.`);
+        setTestMessage(`Connection successful! Retrieved ${data.Services.length} live bus services from LTA DataMall v3.`);
       } else {
         setTestStatus('success');
-        setTestMessage('Backend replied with JSON, but Services array was not formatted as LTA BusArrivalv2.');
+        setTestMessage('Backend replied with JSON successfully.');
       }
     } catch (err: any) {
       setTestStatus('error');
@@ -163,17 +175,17 @@ app.listen(3000, () => console.log('LTA proxy listening on :3000'));`;
             <div className="space-y-4 p-4 rounded-xl bg-slate-950/60 border border-slate-800">
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Custom Backend Base URL
+                  Custom Backend Base URL / Serverless Route
                 </label>
                 <input
                   type="text"
                   value={formData.customBackendUrl}
                   onChange={(e) => setFormData({ ...formData, customBackendUrl: e.target.value })}
-                  placeholder="e.g. http://localhost:3000/api/lta"
+                  placeholder="e.g. /api/busarrival or http://localhost:3000/api/busarrival"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
                 />
                 <p className="text-[11px] text-slate-500 mt-1">
-                  App will call: <code className="text-slate-400 font-mono">{formData.customBackendUrl}/BusArrivalv2?BusStopCode=&#123;code&#125;</code>
+                  Serverless endpoint: <code className="text-slate-400 font-mono">/api/busarrival?BusStopCode=&#123;code&#125;</code> (Health: <code className="text-slate-400 font-mono">/api/health</code>)
                 </p>
               </div>
 

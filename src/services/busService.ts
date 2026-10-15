@@ -16,7 +16,7 @@ const BOOKMARKS_KEY = 'sg_bus_radar_bookmarks';
 
 export const DEFAULT_CONFIG: ApiConfiguration = {
   mode: 'simulation',
-  customBackendUrl: 'http://localhost:3000/api/lta',
+  customBackendUrl: '/api/busarrival',
   ltaAccountKey: '',
   refreshIntervalSeconds: 15,
 };
@@ -266,7 +266,14 @@ export class BusService {
           headers['AccountKey'] = config.ltaAccountKey;
         }
 
-        const url = `${config.customBackendUrl.replace(/\/$/, '')}/BusArrivalv2?BusStopCode=${busStopCode}`;
+        let url = config.customBackendUrl.trim();
+        if (url.includes('?')) {
+          url += `&BusStopCode=${encodeURIComponent(busStopCode)}`;
+        } else if (url.endsWith('/busarrival') || url.endsWith('/busarrival.ts')) {
+          url += `?BusStopCode=${encodeURIComponent(busStopCode)}`;
+        } else {
+          url = `${url.replace(/\/$/, '')}/BusArrival?BusStopCode=${encodeURIComponent(busStopCode)}`;
+        }
         const res = await fetch(url, { headers });
         if (!res.ok) {
           throw new Error(`Backend returned HTTP ${res.status}: ${res.statusText}`);
